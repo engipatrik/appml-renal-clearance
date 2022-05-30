@@ -119,9 +119,10 @@ class Data:
                 NoBool = joinedDf[col].str.contains('No')
 
             #replacing them with 1's and 0's
-            joinedDf[col] = joinedDf[col].where(YesBool, other = 0)
-            joinedDf[col] = joinedDf[col].where(NoBool, other = 1)
-
+            joinedDf[col] = joinedDf[col].where(YesBool, other = False)
+            joinedDf[col] = joinedDf[col].where(NoBool, other = True)
+            
+            joinedDf = joinedDf.astype({col: bool})
         # Working data means it can be used in modelling
         self.working_data = joinedDf
         print("CHECK - joined data")
@@ -225,8 +226,10 @@ class Data:
         # This is used to get the axes/what to show in the heatmap
         top_corr_features = corrmat.index
 
+        sns.set(rc = {'figure.figsize':(14,8)})
         # Generating the plot 
         g=sns.heatmap(self.X[top_corr_features].corr(),annot=True,cmap="RdYlGn")
+
         plt.show()
 
 
@@ -234,34 +237,259 @@ class Data:
 
 
 
-class Model(Data):
+class Model():
 
     """
     Outlining the methods needed for training and optimising a 
-    random forest classifier. 
+    machine learning models using sklearn. 
     """
-    def __init__(self, raw_descriptor_xlsx_path, raw_predictor_xlsx_path, transporter_path):
-        Data.__init__(self, raw_descriptor_xlsx_path, raw_predictor_xlsx_path, transporter_path)
-
+    def __init__(self, X, y, X_train, y_train, X_test, y_test):
+        self.X = X
+        self.y = y
+        self.X_train = X_train
+        self.y_train = y_train
+        self.X_test = X_test
+        self.y_test = y_test
         self.params = None 
+        self.features = None
 
-    def train_predict_rfc(self):
+    def train_predict_rfc(self) :
         from sklearn.ensemble import RandomForestClassifier
+        from sklearn import metrics
+        from sklearn import model_selection
+        import numpy as np
+        if self.params != None:
+            self.clf=RandomForestClassifier(random_state = 2, **self.params)    
+        else:
+            self.clf=RandomForestClassifier(random_state = 2)
+        self.clf.fit(self.X_train,self.y_train)
+        self.y_pred = self.clf.predict(self.X_test)
+
+        print(metrics.confusion_matrix(self.y_test, self.y_pred))
+        print("Accuracy:",metrics.accuracy_score(self.y_test, self.y_pred))
+        print(metrics.classification_report(self.y_test, self.y_pred))
+        print(np.mean(model_selection.cross_val_score(self.clf, self.X_train, self.y_train, cv=5)))
+
+    def leave_one_out(self):
+        import numpy as np
+        from sklearn import model_selection
+        from sklearn.ensemble import RandomForestClassifier
+        #Leave one out cross validation 
+        cv = model_selection.LeaveOneOut()
 
         if self.params != None:
-            self.rfc=RandomForestClassifier(random_state = 2, **self.params)    
+            new_clf=RandomForestClassifier(random_state = 2, **self.params)    
         else:
-            self.rfc=RandomForestClassifier(random_state = 2)
-        self.rfc.fit(self.X_train,self.y_train)
-        self.y_pred = self.rfc.predict(self.X_test)
+            new_clf=RandomForestClassifier(random_state = 2)
+        #essentially getting the scores for each datapoint and comparing it against the rest 
+        scores = model_selection.cross_val_score(new_clf, self.X, self.y, scoring='accuracy', cv=cv)
+        
+        #print the performance 
+        print("Leave one out")
+        print('Accuracy: %.3f (%.3f)' % (np.mean(scores), np.std(scores)))
+        
+        
+    def plot_feature_importance(self):
+        import seaborn as sns
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        feature_imp = pd.Series(self.clf.feature_importances_, index=(list(self.X))).sort_values(ascending=False)
+        feature_imp
+        sns.barplot(x=feature_imp, y=feature_imp.index)
+        plt.xlabel('Feature Importance Score')
+        plt.ylabel('Features')
+        plt.title("Visualizing Important Features")
+        #plt.legend()
+        plt.show()
+        
+    def rfecv(self):
+        from sklearn.feature_selection import RFECV
+        from sklearn.model_selection import StratifiedKFold
+        from sklearn.ensemble import RandomForestClassifier
+        import matplotlib.pyplot as plt
+        import numpy as np
+        cv_estimator = RandomForestClassifier(random_state = 2)
+
+        #fitting it to the data 
+        cv_estimator.fit(self.X_train, self.y_train)
+        
+        #creating another classifiier which will select the features using cross validation 
+        cv_selector = RFECV(cv_estimator,cv= StratifiedKFold(3), step=1,scoring='accuracy')
+        
+        #fitting that to our data as well 
+        cv_selector = cv_selector.fit(self.X_train, self.y_train)
+        
+        #get booleans for which features as helpful 
+        rfecv_mask = cv_selector.get_support() #list of booleans
+        
+        #create a list for those features
+        rfecv_features = [] 
+        
+        #add all of them to the list
+        for bool, feature in zip(rfecv_mask, self.X_train.columns):
+            if bool:
+                rfecv_features.append(feature)
+        
+        #displaying the results
+        print('Optimal number of features :', cv_selector.n_features_)
+        print('Best features :', rfecv_features)
+        
+        self.features = rfecv_features
+        
+        #showing the results as a graph
+        n_features = self.X_train.shape[1]
+        plt.figure(figsize=(8,8))
+        plt.barh(range(n_features), cv_estimator.feature_importances_, align='center') 
+        plt.yticks(np.arange(n_features), self.X_train.columns.values) 
+        plt.xlabel('Feature importance')
+        plt.ylabel('Feature')
+        plt.show()
+
+    def remove_features(self):
+        self.X.columns
+        set_difference = set(self.X.columns).symmetric_difference(set(self.features))
+        list_difference = list(set_difference)
+        self.X.drop(list_difference, axis=1)
+        self.X_train(list_difference, axis=1)
+        self.X_test(list_difference, axis=1)
+        
 
     def train_predict_svm(self):
         from sklearn.svm import SVC
-        self.svc = SVC()
-        self.svc.fit(self.X_train,self.y_train)
-        self.y_pred = self.svc.predict(self.X_test)
+
+        self.clf = SVC()
+        self.clf.fit(self.X_train,self.y_train)
+        self.y_pred = self.clf.predict(self.X_test)
+        
+
+    def compare_datasets_svm(self, X_train_norm, X_test_norm, X_train_stand, X_test_stand):
+        from sklearn.svm import SVC
+        import numpy as np
+        from sklearn import metrics
+        # Creating the support vector machine classifier 
+        svc = SVC(kernel='poly', degree =8)
+        
+        rmse = []
+        
+        acc = []
+        
+        # raw, normalized and standardized training and testing data
+        trainX = [self.X_train, X_train_norm, X_train_stand]
+        testX = [self.X_test, X_test_norm, X_test_stand]
+        
+        # model fitting and measuring RMSE
+        for i in range(len(trainX)):
+            
+            # fit
+            svc.fit(trainX[i],self.y_train)
+            # predict
+            pred = svc.predict(testX[i])
+            # RMSE
+            rmse.append(np.sqrt(metrics.mean_squared_error(self.y_test,pred)))
+            
+            acc.append(metrics.accuracy_score(self.y_test, pred))
+        
+        # visualizing the result    
+        df_svc = pd.DataFrame({'RMSE':rmse,"Accuracy":acc},index=['Original','Normalized','Standardized'])
+        print(df_svc)
+
+    def svm_kernel_select(self, X_train_norm, X_test_norm):
+        import matplotlib.pyplot as plt
+        from sklearn import metrics
+        from sklearn.svm import SVC
+        #testing the different kernels for SVM 
+        kernel_list = ('linear', 'rbf', 'sigmoid', 'poly')
+        
+        #since polynomial kernels can be of different degrees testing those as well 
+        degree_list = range(1,15)
+        scores = {}
+        scores_list = []
+        poly_scores_list = []
+        
+        #looping through the kernel list and generating an accuracy score for all 
+        for k in kernel_list:
+            classifier = SVC(kernel = k)
+            classifier.fit(X_train_norm, self.y_train)
+            y_pred = classifier.predict(X_test_norm)
+            scores[k] = metrics.accuracy_score(self.y_test,y_pred)
+            scores_list.append(metrics.accuracy_score(self.y_test,y_pred))
+            if k == 'poly':
+                for i in degree_list:
+                    classifier = SVC(kernel = 'poly', degree = i)
+                    classifier.fit(X_train_norm, self.y_train)
+                    y_pred = classifier.predict(X_test_norm)
+                    poly_scores_list.append(metrics.accuracy_score(self.y_test,y_pred))
 
 
+        df_svm = pd.DataFrame({'Accuracy':scores},index=kernel_list)
+        print(df_svm)
+        
+        plt.plot(degree_list,poly_scores_list)
+        plt.xlabel("Degree of polynomial")
+        plt.ylabel("Accuracy")
+        
+        
+    def svm_optimise(self, X_train_norm, X_test_norm):
+        from sklearn.model_selection import RepeatedStratifiedKFold
+        from sklearn.model_selection import GridSearchCV
+        from sklearn.svm import SVC
+        
+        # define model and parameters
+        model = SVC()
+        kernel = ['poly', 'rbf', 'sigmoid']
+        C = [50, 10, 1.0, 0.1, 0.01]
+        gamma = ['scale']
+        # define grid search
+        grid = dict(kernel=kernel,C=C,gamma=gamma)
+        cv = RepeatedStratifiedKFold(n_splits=10, n_repeats=3, random_state=1)
+        grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring='accuracy',error_score=0)
+        grid_result = grid_search.fit(X_train_norm, self.y_train)
+        
+        # summarize results
+        print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+        means = grid_result.cv_results_['mean_test_score']
+        stds = grid_result.cv_results_['std_test_score']
+        params = grid_result.cv_results_['params']
+        for mean, stdev, param in zip(means, stds, params):
+            print("%f (%f) with: %r" % (mean, stdev, param))
+            
+        svmc = SVC(**grid_result.best_params_)
+        svmc.fit(X_train_norm, self.y_train)
+        self.y_pred = svmc.predict(X_test_norm)
+        from sklearn import metrics
+        from sklearn import model_selection
+        import numpy as np
+        print(metrics.confusion_matrix(self.y_test, self.y_pred))
+        print("Accuracy:",metrics.accuracy_score(self.y_test, self.y_pred))
+        print(metrics.classification_report(self.y_test, self.y_pred))
+        print(np.mean(model_selection.cross_val_score(svmc, X_train_norm, self.y_train, cv=3)))
+        
+    def ridge_classifier(self):
+        from sklearn.linear_model import RidgeClassifier
+        from sklearn import metrics
+        from sklearn import model_selection
+        #from numpy import mean
+        rc = RidgeClassifier()
+        print(rc)
+        
+        RidgeClassifier(alpha=1.0, class_weight=None, copy_X=True, fit_intercept=True,
+                        max_iter=None, normalize=True, random_state=None, solver='auto',
+                        tol=0.001)
+        rc.fit(self.X_train, self.y_train)
+        score = rc.score(self.X_train, self.y_train)
+        print("Score: ", score)
+        
+        cv_scores = model_selection.cross_val_score(rc, self.X_train, self.y_train, cv=5)
+        print("CV average score: %.2f" % cv_scores.mean())
+        ypred = rc.predict(self.X_test)
+        
+        cm = metrics.confusion_matrix(self.y_test, ypred)
+        print(cm)
+        
+        cr = metrics.classification_report(self.y_test, ypred)
+        print(cr)
+                
+        
     def train_predict_knn(self):
         from sklearn.neighbors import KNeighborsClassifier
         self.knn = KNeighborsClassifier(n_neighbors=15)
@@ -275,7 +503,7 @@ class Model(Data):
         print(metrics.confusion_matrix(self.y_test, self.y_pred))
         print("Accuracy:",metrics.accuracy_score(self.y_test, self.y_pred))
         print(metrics.classification_report(self.y_test, self.y_pred))
-        print(np.mean(model_selection.cross_val_score(self.rfc, self.X_train, self.y_train, cv=5)))
+        print(np.mean(model_selection.cross_val_score(self.clf, self.X_train, self.y_train, cv=3)))
 
     def set_params(self, parameters):
         self.params = parameters
@@ -325,128 +553,47 @@ class Model(Data):
         print(rf_random.best_params_)
         self.params = rf_random.best_params_
 
+    def bayesian_optimisation(self):
+        from skopt import BayesSearchCV
+        from sklearn.ensemble import RandomForestClassifier
+        from skopt.space import Categorical, Integer
 
 
+        search_space = {"bootstrap": Categorical([True, False]), # values for boostrap can be either True or False
+                "max_depth": Integer(6, 20), # values of max_depth are integers from 6 to 20
+                "min_samples_leaf": Integer(2, 10),
+                "min_samples_split": Integer(2, 10),
+                "n_estimators": Integer(100, 1500)
+            }
 
 
-class Model_Metric():
+        search = BayesSearchCV(estimator=RandomForestClassifier(), search_spaces=search_space, cv=3)
+        
+        # perform the search
+        search.fit(self.X_train, self.y_train)
+        # report the best result
+        print(search.best_score_)
+        print(search.best_params_)
+        self.params = search.best_params_
+        
+        
+    def xgboost_train(self):
+        
+        # First XGBoost model for Pima Indians dataset
 
-    """
-    Outlining the methods needed for training and optimising a 
-    random forest classifier. 
-    """
-    def __init__(self, y_test, pred):
-        self.y_test = y_test
-        self.pred = pred
+        from xgboost import XGBClassifier
 
-    def confusion_matrix(self):
-        from sklearn.metrics import confusion_matrix
-        confusion_matrix(self.y_test, self.y_pred)
+        from sklearn.metrics import accuracy_score
 
-    def predict():
-        pass
+        # split data into train and test sets
 
-    def optimise():
-        pass
-
-
-class KNN():
-
-    """
-    Outlining the methods needed for training and optimising a 
-    random forest classifier. 
-    """
-    def __init__(self):
-        pass
-
-    def train_model():
-        pass
-
-    def predict():
-        pass
-
-    def optimise():
-        pass
-
-
-class Evaluation():
-    """
-    A set of methods comparing the predicted outputs from each model 
-    with the chosen test data (likely to include cross validation methods).
-    """
-    def __init__(self):
-        pass
-
-    def confusion_matrix():
-        pass
-    
-    def accuracy_breakdown():
-        pass
-
-    def auc_roc():
-        pass
-
-    def cross_validation():
-        pass
-
-
-class Visualisation():
-    """
-    There are various visualisations which can be generated, and therefore 
-    this object can handle the creation and manipulation of these. 
-    """
-    def __init__(self):
-        pass
-
-    def auc_roc_plot():
-        pass
-
-    def confusion_matrix_heatmap():
-        pass
-
-    def class_balance_barplot():
-        pass
-
-    def correlation_heatmap():
-        pass
-
-
-class Optimisation():
-    """
-    Capturing the several different methods for optimising each of the models.
-    Might need to create slightly different methods for each model, or 
-    the inputs for each algorithm could be arguments. 
-    """
-    def __init__(self):
-        pass
-
-    def random_search():
-        pass
-
-    def grid_search():
-        pass
-
-    def bayesian_optimise():
-        pass
-
-
-class Pipeline():
-    """
-    This class shuld collate most of the methods from above and join into a 
-    logical sequence to somewhat automatically build a model from scratch. 
-    """
-    def __init__(self):
-        pass
-
-    def load_data():
-        pass
-
-    def train_base_model():
-        pass
-
-    def select_features():
-        pass
-
-    def optimise_parameters():
-        pass
+        # fit model no training data
+        model = XGBClassifier()
+        model.fit(self.X_train, self.y_train)
+        # make predictions for test data
+        self.y_pred = model.predict(self.X_test)
+        predictions = [round(value) for value in self.y_pred]
+        # evaluate predictions
+        accuracy = accuracy_score(self.y_test, predictions)
+        print("Accuracy: %.2f%%" % (accuracy * 100.0))
 
