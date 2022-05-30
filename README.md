@@ -6,3 +6,4 @@ The package dependancies are stored in environment.yml and an environment can be
 
     conda env create -f environment.yml
 
+The data is purposefully missing from this repository. This data can be found with the handed in report, simply copy and paste the Data folder from the .zip into the same folder as the scripts and everything should run. 
